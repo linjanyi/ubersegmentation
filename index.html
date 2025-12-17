@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Uber帳號合併分割工具</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px auto;
+            max-width: 800px;
+            line-height: 1.6;
+            color: #333;
+        }
+        h1, h2 {
+            text-align: center;
+            color: #444;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            background-color: #f9f9f9;
+        }
+        input, button, label {
+            display: block;
+            width: 100%;
+            margin: 10px 0;
+            padding: 10px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        button {
+            background: linear-gradient(to right, #4CAF50, #45a049);
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        label {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Uber帳號合併分割工具</h1>
+    <h2>點餐教學 帳號購買　請 + @470qkyvi</h2>
+    <div class="section">
+        <label for="fileInputExcel">上傳 Excel 文件：</label>
+        <input type="file" id="fileInputExcel" accept=".xlsx, .xls" multiple>
+        <label for="splitSize">每個檔案的最大資料筆數（預設不分割）：</label>
+        <input type="number" id="splitSize" value="" min="1" placeholder="輸入分割大小（可選）">
+        <button onclick="processExcelFiles()">整理並下載</button>
+    </div>
+
+    <script>
+        // 取得當前日期（格式：MMDD）
+        function getCurrentDate() {
+            const now = new Date();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            return `${month}${day}`;
+        }
+
+        // Uber帳號合併分割工具主邏輯
+        function processExcelFiles() {
+            const fileInput = document.getElementById('fileInputExcel');
+            const files = fileInput.files;
+            const splitSizeInput = document.getElementById('splitSize').value;
+            const splitSize = splitSizeInput ? parseInt(splitSizeInput, 10) : null;
+
+            if (files.length === 0) {
+                alert('請上傳至少一個 Excel 文件！');
+                return;
+            }
+
+            let allData = [];
+            const zip = new JSZip();
+
+            const promises = Array.from(files).map(file => {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const data = new Uint8Array(e.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const sheetName = workbook.SheetNames[0];
+                        const sheet = workbook.Sheets[sheetName];
+                        const jsonData = XLSX.utils.sheet_to_json(sheet);
+                        const processedData = jsonData.map(row => processRow(row)).filter(row => row !== null);
+                        resolve(processedData);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsArrayBuffer(file);
+                });
+            });
+
+            Promise.all(promises).then(results => {
+                results.forEach(data => {
+                    allData = allData.concat(data);
+                });
+
+                const chunks = [];
+                if (splitSize) {
+                    for (let i = 0; i < allData.length; i += splitSize) {
+                        chunks.push(allData.slice(i, i + splitSize));
+                    }
+                } else {
+                    chunks.push(allData);
+                }
+
+                const currentDate = getCurrentDate();
+
+                if (chunks.length > 1) {
+                    chunks.forEach((chunk, index) => {
+                        const filename = `${currentDate}_${chunk.length}_${index + 1}.xlsx`;
+                        const workbook = createWorkbook(chunk);
+                        const content = XLSX.write(workbook, { bookType: 'xlsx', type: 'binary' });
+                        zip.file(filename, content, { binary: true });
+                    });
+
+                    zip.generateAsync({ type: 'blob' }).then(content => {
+                        const totalCount = allData.length;
+                        saveAs(content, `UberAccount_${totalCount}.zip`);
+                    });
+                } else {
+                    const filename = `${currentDate}_${chunks[0].length}_1.xlsx`;
+                    const workbook = createWorkbook(chunks[0]);
+                    XLSX.writeFile(workbook, filename);
+                }
+            }).catch(error => {
+                alert(`錯誤：${error.message}`);
+            });
+        }
+
+        function processRow(row) {
+            if (!row.cookie || row.cookie.trim() === "") {
+                return null;
+            }
+
+            const clearedRow = {
+                acc_id: "",
+                id: "",
+                group: "",
+                platform: "",
+                username: "",
+                password: "",
+                fakey: "",
+                proxytype: "",
+                ipchecker: "",
+                proxy: "",
+                proxyurl: "",
+                proxyid: "",
+                ip: "",
+                countrycode: "",
+                ua: "",
+                cookie: row.cookie || "",
+                name: "",
+                remark: row.remark || "" // 保留原始 remark 值
+            };
+
+            if (row.name) {
+                // 提取電子郵件
+                const emailMatch = row.name.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                clearedRow.name = emailMatch ? emailMatch[0] : "";
+
+                // 當 remark 沒有時間資訊時，嘗試提取日期時間資訊
+                if (!clearedRow.remark.match(/\d{2}-\d{2} \d{2}:\d{2}/)) {
+                    const datetimeMatch = row.name.match(/\d{2}-\d{2} \d{2}:\d{2}/);
+                    if (datetimeMatch) {
+                        clearedRow.remark = datetimeMatch[0]; // 如果有日期時間，新增到 remark
+                    } else if (!clearedRow.remark) {
+                        clearedRow.remark = "無日期時間資訊"; // 若 remark 為空，提供預設值
+                    }
+                }
+            }
+
+            return clearedRow;
+        }
+
+        function createWorkbook(data) {
+            const workbook = XLSX.utils.book_new();
+            const columnOrder = [
+                "acc_id", "id", "group", "name", "remark", "platform",
+                "username", "password", "fakey", "cookie", "proxytype",
+                "ipchecker", "proxy", "proxyurl", "proxyid", "ip",
+                "countrycode", "ua"
+            ];
+            const sheet = XLSX.utils.json_to_sheet(data, { header: columnOrder });
+            XLSX.utils.book_append_sheet(workbook, sheet, "Processed Data");
+            return workbook;
+        }
+    </script>
+</body>
+</html>
